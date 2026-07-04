@@ -1,4 +1,5 @@
 import debug from 'debug';
+import { checkApiKeyAuth, isApiKey } from '@/lib/api-key';
 import {
   ROLE_PERMISSIONS,
   ROLES,
@@ -22,6 +23,12 @@ export function getBearerToken(request: Request) {
 
 export async function checkAuth(request: Request) {
   const token = getBearerToken(request);
+
+  // Fork (RFD 0001): API keys bypass the JWT path entirely.
+  if (isApiKey(token)) {
+    return checkApiKeyAuth(token);
+  }
+
   const payload = parseSecureToken(token, secret());
   const shareToken = await parseShareToken(request);
 

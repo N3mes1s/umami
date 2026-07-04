@@ -427,3 +427,80 @@ model HeatmapEvent {
   @@index([websiteId, urlPath, eventType, createdAt])
   @@map("heatmap_event")
 }
+
+// ---------------------------------------------------------------------------
+// Fork additions (see rfd/). Keep below upstream models to minimize merge
+// conflicts; never modify upstream models above this line.
+// ---------------------------------------------------------------------------
+
+// RFD 0001
+model ApiKey {
+  id         String    @id() @map("api_key_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  name       String    @db.VarChar(100)
+  keyHash    String    @unique() @map("key_hash") @db.VarChar(128)
+  keyPrefix  String    @map("key_prefix") @db.VarChar(20)
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@map("api_key")
+}
+
+// RFD 0002
+model AgentEvent {
+  id             String   @id() @map("agent_event_id") @db.Uuid
+  websiteId      String   @map("website_id") @db.Uuid
+  category       String   @db.VarChar(20)
+  name           String?  @db.VarChar(50)
+  operator       String?  @db.VarChar(50)
+  urlPath        String   @map("url_path") @db.VarChar(500)
+  hostname       String?  @db.VarChar(100)
+  referrerDomain String?  @map("referrer_domain") @db.VarChar(500)
+  userAgent      String?  @map("user_agent") @db.VarChar(500)
+  ipHash         String?  @map("ip_hash") @db.VarChar(64)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([websiteId, createdAt])
+  @@index([websiteId, createdAt, name])
+  @@index([websiteId, createdAt, urlPath])
+  @@map("agent_event")
+}
+
+// RFD 0008
+model Alert {
+  id              String    @id() @map("alert_id") @db.Uuid
+  websiteId       String    @map("website_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  name            String    @db.VarChar(200)
+  type            String    @db.VarChar(50)
+  parameters      Json
+  channels        Json
+  enabled         Boolean   @default(true)
+  intervalMinutes Int       @default(60) @map("interval_minutes")
+  nextRunAt       DateTime? @map("next_run_at") @db.Timestamptz(6)
+  lastTriggeredAt DateTime? @map("last_triggered_at") @db.Timestamptz(6)
+  createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  @@index([websiteId])
+  @@index([enabled, nextRunAt])
+  @@map("alert")
+}
+
+// RFD 0008
+model AlertEvent {
+  id        String   @id() @map("alert_event_id") @db.Uuid
+  alertId   String   @map("alert_id") @db.Uuid
+  websiteId String   @map("website_id") @db.Uuid
+  status    String   @db.VarChar(20)
+  payload   Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([alertId, createdAt])
+  @@index([websiteId, createdAt])
+  @@map("alert_event")
+}
