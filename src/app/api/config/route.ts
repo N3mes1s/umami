@@ -11,6 +11,7 @@ export async function GET(request: Request) {
   }
 
   return json({
+    aiEnabled: !!process.env.ANTHROPIC_API_KEY, // Fork (RFD 0009)
     cloudMode: !!process.env.CLOUD_MODE,
     faviconUrl: process.env.FAVICON_URL,
     linksUrl: process.env.LINKS_URL,

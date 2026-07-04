@@ -6,6 +6,8 @@
  * runDueAlerts().
  */
 import type { Alert } from '@/generated/prisma/client';
+import { aiEnabled } from '@/lib/ai/client';
+import { composeNarrativeDigest } from '@/lib/ai/digest';
 import { uuid } from '@/lib/crypto';
 import { type NotifyChannel, sendNotification } from '@/lib/notify';
 import {
@@ -223,7 +225,13 @@ export async function composeDigest(websiteId: string, periodMinutes: number): P
 }
 
 async function evaluateDigest(alert: Alert): Promise<AlertEvaluation> {
-  const body = await composeDigest(alert.websiteId, alert.intervalMinutes);
+  let body = await composeDigest(alert.websiteId, alert.intervalMinutes);
+
+  // Fork (RFD 0009): rewrite as an LLM narrative when configured;
+  // composeNarrativeDigest falls back to the plain text on any error.
+  if (aiEnabled()) {
+    body = await composeNarrativeDigest(body, alert.websiteId, alert.intervalMinutes);
+  }
 
   return {
     triggered: true,
