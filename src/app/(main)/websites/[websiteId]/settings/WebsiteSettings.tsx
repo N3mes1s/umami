@@ -1,5 +1,6 @@
 import { Column } from '@umami/react-zen';
 import { Panel } from '@/components/common/Panel';
+import { WebsiteAlerts } from './WebsiteAlerts'; // Fork (RFD 0008)
 import { WebsiteData } from './WebsiteData';
 import { WebsiteEditForm } from './WebsiteEditForm';
 import { WebsiteReplaySettings } from './WebsiteReplaySettings';
@@ -20,6 +21,10 @@ export function WebsiteSettings({ websiteId }: { websiteId: string; openExternal
       </Panel>
       <Panel>
         <WebsiteShareForm websiteId={websiteId} />
+      </Panel>
+      {/* Fork (RFD 0008) */}
+      <Panel>
+        <WebsiteAlerts websiteId={websiteId} />
       </Panel>
       <Panel>
         <WebsiteData websiteId={websiteId} />
