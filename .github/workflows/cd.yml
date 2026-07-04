@@ -113,6 +113,10 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.compute.outputs.ghcr_tags }}
+          # Fork: bake the adblock-resistant tracker script name (/stats.js) at
+          # build time — it's a Next rewrite, not a runtime setting.
+          build-args: |
+            TRACKER_SCRIPT_NAME=stats
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
