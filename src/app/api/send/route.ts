@@ -134,19 +134,23 @@ export async function POST(request: Request) {
       payload,
     );
 
-    const createdAt = timestamp ? new Date(timestamp * 1000) : new Date();
-
-    // Bot check — Fork (RFD 0002): capture & classify agent traffic instead of dropping it
-    const agentCheck = await checkAgentTraffic({
-      userAgent,
-      websiteId,
-      url,
-      hostname,
-      referrer,
-      ip,
-      createdAt,
-    });
-    if (agentCheck.handled) {
+    // Bot check — Fork (RFD 0002): capture & classify agent traffic instead of
+    // dropping it. Blocked IPs (IGNORE_IP) skip capture and fall through to the
+    // IP block below.
+    if (
+      !hasBlockedIp(ip) &&
+      (
+        await checkAgentTraffic({
+          userAgent,
+          websiteId,
+          url,
+          hostname,
+          referrer,
+          ip,
+          createdAt: timestamp ? new Date(timestamp * 1000) : new Date(),
+        })
+      ).handled
+    ) {
       return json({ beep: 'boop' });
     }
 
@@ -155,6 +159,7 @@ export async function POST(request: Request) {
       return forbidden();
     }
 
+    const createdAt = timestamp ? new Date(timestamp * 1000) : new Date();
     const now = Math.floor(Date.now() / 1000);
 
     const saltRotation = process.env.SALT_ROTATION || 'month';

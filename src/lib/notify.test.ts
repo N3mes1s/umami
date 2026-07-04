@@ -39,6 +39,24 @@ describe('isSafeWebhookUrl', () => {
     expect(isSafeWebhookUrl('http://11.0.0.1/hook')).toBe(true);
     expect(isSafeWebhookUrl('http://192.169.0.1/hook')).toBe(true);
   });
+
+  test('blocks IPv6-mapped IPv4 loopback/link-local (SSRF)', () => {
+    expect(isSafeWebhookUrl('http://[::ffff:127.0.0.1]/hook')).toBe(false);
+    expect(isSafeWebhookUrl('http://[::ffff:169.254.169.254]/meta')).toBe(false);
+    expect(isSafeWebhookUrl('http://[::ffff:10.0.0.1]/hook')).toBe(false);
+  });
+
+  test('blocks numeric IPv4 encodings that normalize to loopback (SSRF)', () => {
+    // new URL() normalizes these to 127.0.0.1 before the range check sees them.
+    expect(isSafeWebhookUrl('http://2130706433/hook')).toBe(false);
+    expect(isSafeWebhookUrl('http://0x7f000001/hook')).toBe(false);
+  });
+
+  test('blocks other reserved ranges', () => {
+    expect(isSafeWebhookUrl('http://100.64.0.1/hook')).toBe(false); // carrier-grade NAT
+    expect(isSafeWebhookUrl('http://[fc00::1]/hook')).toBe(false); // unique-local IPv6
+    expect(isSafeWebhookUrl('http://[fe80::1]/hook')).toBe(false); // link-local IPv6
+  });
 });
 
 describe('buildPayload', () => {

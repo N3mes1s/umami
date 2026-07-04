@@ -3,6 +3,7 @@
  *
  * Plain fetch, 5s timeout, one retry on network error / 5xx. Never throws.
  */
+import ipaddr from 'ipaddr.js';
 
 export interface NotifyChannel {
   type: 'slack' | 'discord' | 'webhook';
@@ -25,10 +26,17 @@ export interface NotifyResult {
 const FETCH_TIMEOUT_MS = 5000;
 
 /**
- * Basic SSRF hygiene: only http(s), and reject obvious private/loopback
- * address literals. Documented limitation: a public hostname that resolves
- * to a private address (DNS rebinding) is NOT caught here — that would
- * require resolving and pinning the address at request time.
+ * Basic SSRF hygiene: only http(s), and reject non-public destinations.
+ *
+ * IP literals (including decimal/hex forms the URL parser normalizes, and
+ * IPv6-mapped IPv4 such as ::ffff:127.0.0.1) are range-checked with ipaddr.js
+ * so only public unicast addresses pass. Hostnames that are not IP literals
+ * (a domain, or "localhost") are checked by name.
+ *
+ * Documented limitation: a public hostname that resolves to a private address
+ * (DNS rebinding) is NOT caught here — that would require resolving and
+ * pinning the address at connect time. Redirects are not followed (see
+ * attempt()), so an allowed host cannot bounce the request to a private one.
  */
 export function isSafeWebhookUrl(url: string): boolean {
   let parsed: URL;
@@ -46,18 +54,23 @@ export function isSafeWebhookUrl(url: string): boolean {
   // Strip IPv6 brackets; lowercase for comparison.
   const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
 
-  if (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host === '::1' ||
-    host === '0.0.0.0' ||
-    host.startsWith('127.') ||
-    host.startsWith('10.') ||
-    host.startsWith('192.168.') ||
-    host.startsWith('169.254.') ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-  ) {
+  if (host === 'localhost' || host.endsWith('.localhost')) {
     return false;
+  }
+
+  // IP literal? Range-check it. Map IPv4-in-IPv6 down to IPv4 first so
+  // ::ffff:169.254.169.254 is judged as the link-local address it targets.
+  if (ipaddr.isValid(host)) {
+    let addr = ipaddr.parse(host);
+
+    if (addr.kind() === 'ipv6' && (addr as ipaddr.IPv6).isIPv4MappedAddress()) {
+      addr = (addr as ipaddr.IPv6).toIPv4Address();
+    }
+
+    // Only ordinary public unicast is allowed; loopback, private, linkLocal
+    // (incl. cloud metadata 169.254.169.254), uniqueLocal, reserved,
+    // carrierGradeNat, unspecified, broadcast all resolve to non-'unicast'.
+    return addr.range() === 'unicast';
   }
 
   return true;
@@ -132,6 +145,9 @@ async function attempt(url: string, payload: Record<string, any>): Promise<Notif
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
       signal: controller.signal,
+      // Do not follow redirects: isSafeWebhookUrl only validated the initial
+      // host, so a 3xx to a private address would otherwise bypass it (SSRF).
+      redirect: 'manual',
     });
 
     return response.ok

@@ -10,6 +10,7 @@ import { aiEnabled } from '@/lib/ai/client';
 import { composeNarrativeDigest } from '@/lib/ai/digest';
 import { uuid } from '@/lib/crypto';
 import { type NotifyChannel, sendNotification } from '@/lib/notify';
+import prisma from '@/lib/prisma';
 import {
   createAlertEvent,
   getDueAlerts,
@@ -161,7 +162,14 @@ async function evaluateChange(alert: Alert, now: Date): Promise<AlertEvaluation>
 }
 
 async function evaluateNewAgent(alert: Alert, now: Date): Promise<AlertEvaluation> {
-  const since = new Date(now.getTime() - alert.intervalMinutes * MINUTE_MS);
+  const intervalMs = alert.intervalMinutes * MINUTE_MS;
+  // Anchor the window to the previous run time (the previous run set
+  // nextRunAt = prevRunTime + interval) so consecutive windows tile
+  // [prevRun, now] without gaps when ticks arrive late.
+  const since = alert.nextRunAt
+    ? new Date(alert.nextRunAt.getTime() - intervalMs)
+    : new Date(now.getTime() - intervalMs);
+  const windowMinutes = Math.max(1, Math.round((now.getTime() - since.getTime()) / MINUTE_MS));
   const names = await getRecentAgentNames(alert.websiteId, since);
 
   const newNames: string[] = [];
@@ -176,8 +184,8 @@ async function evaluateNewAgent(alert: Alert, now: Date): Promise<AlertEvaluatio
     triggered: newNames.length > 0,
     title: alert.name,
     body: newNames.length
-      ? `New agents seen in the last ${alert.intervalMinutes} minutes: ${newNames.join(', ')}`
-      : `No new agents in the last ${alert.intervalMinutes} minutes`,
+      ? `New agents seen in the last ${windowMinutes} minutes: ${newNames.join(', ')}`
+      : `No new agents in the last ${windowMinutes} minutes`,
     fields: newNames.map(name => ({ name: 'Agent', value: name })),
   };
 }
@@ -300,6 +308,19 @@ export async function runDueAlerts(limit: number = 50): Promise<RunDueAlertsResu
 
   for (const alert of alerts) {
     const now = new Date();
+
+    // Atomically claim the alert by advancing nextRunAt before evaluation and
+    // delivery, so an overlapping tick that selected the same (stale) row
+    // cannot process it a second time. count === 0 means another run claimed it.
+    const claimed = await prisma.client.alert.updateMany({
+      where: { id: alert.id, nextRunAt: alert.nextRunAt },
+      data: { nextRunAt: new Date(now.getTime() + alert.intervalMinutes * MINUTE_MS) },
+    });
+
+    if (claimed.count === 0) {
+      continue;
+    }
+
     processed += 1;
 
     try {
@@ -374,17 +395,14 @@ export async function runDueAlerts(limit: number = 50): Promise<RunDueAlertsResu
         });
       }
 
-      await updateAlert(alert.id, {
-        nextRunAt: new Date(now.getTime() + alert.intervalMinutes * MINUTE_MS),
-        ...(result?.triggered && { lastTriggeredAt: now }),
-      });
+      // nextRunAt was already advanced by the claim above.
+      if (result?.triggered) {
+        await updateAlert(alert.id, { lastTriggeredAt: now });
+      }
     } catch {
+      // Already rescheduled by the claim, so a persistently failing alert
+      // cannot wedge the runner.
       errors += 1;
-
-      // Still reschedule so a persistently failing alert cannot wedge the runner.
-      await updateAlert(alert.id, {
-        nextRunAt: new Date(now.getTime() + alert.intervalMinutes * MINUTE_MS),
-      }).catch(() => undefined);
     }
   }
 

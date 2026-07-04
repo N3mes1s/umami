@@ -3,7 +3,7 @@ import { aiEnabled } from '@/lib/ai/client';
 import { askAnalytics } from '@/lib/ai/query';
 import { parseRequest } from '@/lib/request';
 import { json, notFound, serverError, unauthorized } from '@/lib/response';
-import { canViewWebsite } from '@/permissions';
+import { canViewAuthenticatedWebsite } from '@/permissions';
 
 const schema = z.object({
   websiteId: z.uuid(),
@@ -33,7 +33,8 @@ export async function POST(request: Request) {
 
   const { websiteId, question, history } = body;
 
-  if (!(await canViewWebsite(auth, websiteId))) {
+  // Require an authenticated user or API key; share tokens must not drive the paid AI loop.
+  if (!(await canViewAuthenticatedWebsite(auth, websiteId))) {
     return unauthorized();
   }
 

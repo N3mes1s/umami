@@ -210,6 +210,14 @@ const UPSTREAM_LLM_DOMAINS = [
   'perplexity.ai',
 ];
 
+// Domains too short/generic for the channel queries' substring matching
+// (referrer_domain ilike '%<domain>%' / multiSearchAny): '%x.ai%' would match
+// 'onyx.ai', '%you.com%' would match 'thankyou.com', etc. Keep them out of
+// LLM_DOMAINS; they remain in AI_ASSISTANT_DOMAINS, whose consumers match on
+// exact domain / subdomain boundaries.
+const SUBSTRING_UNSAFE_LLM_DOMAINS = ['x.ai', 'you.com', 'poe.com', 'kimi.com'];
+
 export const EXTRA_LLM_DOMAINS: string[] = AI_ASSISTANT_DOMAINS.map(({ domain }) => domain).filter(
-  domain => !UPSTREAM_LLM_DOMAINS.includes(domain),
+  domain =>
+    !UPSTREAM_LLM_DOMAINS.includes(domain) && !SUBSTRING_UNSAFE_LLM_DOMAINS.includes(domain),
 );

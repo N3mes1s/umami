@@ -4,7 +4,7 @@ import { getCompareDate } from '@/lib/date';
 import { resolveDateRange } from '@/lib/mcp/dates';
 import { McpToolError } from '@/lib/mcp/errors';
 import type { Auth, QueryFilters } from '@/lib/types';
-import { canViewWebsite } from '@/permissions';
+import { canViewAuthenticatedWebsite } from '@/permissions';
 import { getUserWebsites } from '@/queries/prisma/website';
 import { getAgentMetrics } from '@/queries/sql/agents/getAgentMetrics';
 import { getAgentStats } from '@/queries/sql/agents/getAgentStats';
@@ -70,7 +70,9 @@ const limitSchema = z
   .describe(`Maximum number of rows to return (default ${DEFAULT_ROW_CAP}, max ${MAX_ROW_CAP})`);
 
 async function checkWebsiteAccess(auth: Auth, websiteId: string) {
-  if (!(await canViewWebsite(auth, websiteId))) {
+  // MCP is authenticated with a user session or API key; share tokens are
+  // section-scoped and must not grant blanket access to these tools.
+  if (!(await canViewAuthenticatedWebsite(auth, websiteId))) {
     throw new McpToolError('Access denied to website');
   }
 }
@@ -323,6 +325,19 @@ const getActiveVisitorsTool: McpTool = {
   },
 };
 
+// The public step type names map onto the internal names getFunnel expects
+// ('path' | 'event'), mirroring METRIC_TYPE_ALIASES.
+const FUNNEL_STEP_TYPE_ALIASES: Record<string, string> = {
+  url: 'path',
+};
+
+const funnelStepSchema = z.object({
+  type: z.enum(['url', 'event']),
+  value: z.string().min(1),
+});
+
+const funnelStepsSchema = z.array(funnelStepSchema).min(2);
+
 const runReport: McpTool = {
   name: 'run_report',
   description:
@@ -355,9 +370,11 @@ const runReport: McpTool = {
 
     switch (args.type) {
       case 'funnel': {
-        const { window, steps } = parameters;
+        const { window } = parameters;
 
-        if (!Array.isArray(steps) || steps.length < 2) {
+        const parsedSteps = funnelStepsSchema.safeParse(parameters.steps);
+
+        if (!parsedSteps.success) {
           throw new McpToolError(
             'funnel requires parameters.steps: an array of at least 2 steps of ' +
               '{ type: "url" | "event", value: string }',
@@ -369,6 +386,11 @@ const runReport: McpTool = {
             'funnel requires parameters.window: a positive number of minutes allowed between steps',
           );
         }
+
+        const steps = parsedSteps.data.map(step => ({
+          type: FUNNEL_STEP_TYPE_ALIASES[step.type] ?? step.type,
+          value: step.value,
+        }));
 
         data = await getFunnel(
           args.websiteId,

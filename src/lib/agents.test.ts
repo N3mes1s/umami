@@ -331,7 +331,16 @@ test('EXTRA_LLM_DOMAINS excludes the six upstream domains', () => {
   expect(EXTRA_LLM_DOMAINS).toContain('grok.com');
   expect(EXTRA_LLM_DOMAINS).toContain('chat.deepseek.com');
   expect(EXTRA_LLM_DOMAINS).toContain('duck.ai');
-  expect(EXTRA_LLM_DOMAINS.length).toBe(AI_ASSISTANT_DOMAINS.length - upstream.length);
+});
+
+test('EXTRA_LLM_DOMAINS excludes domains unsafe for substring channel matching', () => {
+  // Channel queries match referrer_domain with substring ILIKE ('%x.ai%'
+  // would match 'onyx.ai'), so short/generic domains must not reach
+  // LLM_DOMAINS even though they stay in AI_ASSISTANT_DOMAINS.
+  for (const domain of ['x.ai', 'you.com', 'poe.com', 'kimi.com']) {
+    expect(EXTRA_LLM_DOMAINS).not.toContain(domain);
+    expect(AI_ASSISTANT_DOMAINS.map(({ domain: d }) => d)).toContain(domain);
+  }
 });
 
 test('AI_ASSISTANT_DOMAINS entries all carry labels and unique domains', () => {
