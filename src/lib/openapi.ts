@@ -161,6 +161,34 @@ const websiteIdPathParameter = {
   schema: { type: 'string', format: 'uuid' },
 };
 
+const alertIdPathParameter = {
+  name: 'alertId',
+  in: 'path',
+  required: true,
+  description: 'Alert id (UUID).',
+  schema: { type: 'string', format: 'uuid' },
+};
+
+/** Required `startAt`/`endAt` (ms) parameters for the agent-traffic endpoints. */
+function agentDateQueryParameters(): Record<string, any>[] {
+  return [
+    {
+      name: 'startAt',
+      in: 'query',
+      required: true,
+      description: 'Start of the date range as a Unix timestamp in **milliseconds**.',
+      schema: { type: 'integer', format: 'int64' },
+    },
+    {
+      name: 'endAt',
+      in: 'query',
+      required: true,
+      description: 'End of the date range as a Unix timestamp in **milliseconds**.',
+      schema: { type: 'integer', format: 'int64' },
+    },
+  ];
+}
+
 const unauthorizedResponse = {
   description: 'Missing or invalid credentials, or no access to the website.',
 };
@@ -310,6 +338,118 @@ const apiKeySchema = {
   },
 };
 
+const agentTrafficTotalsSchema = {
+  type: 'object',
+  description: 'Bot/agent event totals for one period.',
+  properties: {
+    events: { type: 'number', description: 'All classified bot/agent events.' },
+    crawlers: { type: 'number', description: 'Events in the `ai_crawler` category.' },
+    agents: { type: 'number', description: 'Events in the `ai_agent` category.' },
+    search: { type: 'number', description: 'Events in the `ai_search` category.' },
+    other: {
+      type: 'number',
+      description: 'Events in the remaining categories (search crawlers, SEO tools, ...).',
+    },
+    distinctClients: { type: 'number', description: 'Distinct hashed client IPs.' },
+  },
+};
+
+const ALERT_TYPE_PARAMETERS = [
+  'Per-type `parameters`:',
+  '- `threshold` — `{ metric, operator: "gt"|"lt", value: number, windowMinutes: 1–10080 }`',
+  '- `change` — `{ metric, windowMinutes: 1–10080, pctChange: number > 0, direction: "up"|"down"|"both" }`',
+  '- `new-agent` and `digest` take no parameters (send `{}`).',
+].join('\n');
+
+const alertChannelSchema = {
+  type: 'object',
+  required: ['type', 'url'],
+  properties: {
+    type: { type: 'string', enum: ['slack', 'discord', 'webhook'] },
+    url: {
+      type: 'string',
+      maxLength: 500,
+      description:
+        'Webhook URL. Must be a public http(s) address — private/internal hosts are rejected.',
+    },
+  },
+};
+
+const alertSchema = {
+  type: 'object',
+  description: `A configured alert (RFD 0008). ${ALERT_TYPE_PARAMETERS}`,
+  properties: {
+    id: { type: 'string', format: 'uuid' },
+    websiteId: { type: 'string', format: 'uuid' },
+    userId: { type: 'string', format: 'uuid' },
+    name: { type: 'string' },
+    type: { type: 'string', enum: ['threshold', 'change', 'new-agent', 'digest'] },
+    parameters: { type: 'object', additionalProperties: true },
+    channels: { type: 'array', items: alertChannelSchema },
+    enabled: { type: 'boolean' },
+    intervalMinutes: { type: 'integer' },
+    nextRunAt: { type: ['string', 'null'], format: 'date-time' },
+    lastTriggeredAt: { type: ['string', 'null'], format: 'date-time' },
+    createdAt: { type: ['string', 'null'], format: 'date-time' },
+    updatedAt: { type: ['string', 'null'], format: 'date-time' },
+  },
+};
+
+const alertEventSchema = {
+  type: 'object',
+  description: 'One evaluation outcome of an alert (triggered, ok or error).',
+  properties: {
+    id: { type: 'string', format: 'uuid' },
+    alertId: { type: 'string', format: 'uuid' },
+    websiteId: { type: 'string', format: 'uuid' },
+    status: { type: 'string' },
+    payload: { type: ['object', 'null'], additionalProperties: true },
+    createdAt: { type: 'string', format: 'date-time' },
+  },
+};
+
+/**
+ * Request body for `POST /api/alerts` (create — most fields required) and
+ * `POST /api/alerts/{alertId}` (update — everything optional, `websiteId`
+ * not accepted).
+ */
+function alertRequestBody(isCreate: boolean): Record<string, any> {
+  return {
+    required: true,
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          description: ALERT_TYPE_PARAMETERS,
+          ...(isCreate && { required: ['websiteId', 'name', 'type', 'channels'] }),
+          properties: {
+            ...(isCreate && { websiteId: { type: 'string', format: 'uuid' } }),
+            name: { type: 'string', minLength: 1, maxLength: 200 },
+            type: { type: 'string', enum: ['threshold', 'change', 'new-agent', 'digest'] },
+            parameters: {
+              type: 'object',
+              additionalProperties: true,
+              description: 'Type-specific parameters, validated per `type`. Defaults to `{}`.',
+            },
+            channels: {
+              type: 'array',
+              minItems: 1,
+              items: alertChannelSchema,
+            },
+            enabled: { type: 'boolean', description: 'Defaults to `true`.' },
+            intervalMinutes: {
+              type: 'integer',
+              minimum: 5,
+              maximum: 10080,
+              description: 'How often the alert is evaluated. Defaults to 60.',
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 export function getOpenApiSpec(): Record<string, any> {
   return {
     openapi: '3.1.0',
@@ -346,6 +486,13 @@ export function getOpenApiSpec(): Record<string, any> {
           description:
             'Send `Authorization: Bearer <credential>`. Two credential types are accepted: an API key (`umami_ak_...`, created via `POST /api/api-keys`; only its hash is stored server-side) or a login JWT obtained from `POST /api/auth/login`.',
         },
+        jobsKey: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'x-umami-jobs-key',
+          description:
+            'Shared-secret header for the jobs runner (`POST /api/jobs/tick` only). Must match the server’s `JOBS_KEY` environment variable.',
+        },
       },
       schemas: {
         Website: websiteSchema,
@@ -354,6 +501,9 @@ export function getOpenApiSpec(): Record<string, any> {
         MetricRow: metricRowSchema,
         PagedResult: pagedResultSchema,
         ApiKey: apiKeySchema,
+        AgentTrafficTotals: agentTrafficTotalsSchema,
+        Alert: alertSchema,
+        AlertEvent: alertEventSchema,
       },
     },
     paths: {
@@ -440,6 +590,32 @@ export function getOpenApiSpec(): Record<string, any> {
             }),
             '400': badRequestResponse,
             '401': unauthorizedResponse,
+          },
+        },
+      },
+      '/api/api-keys/{keyId}': {
+        delete: {
+          operationId: 'deleteApiKey',
+          summary: 'Delete an API key',
+          description:
+            'Deletes (revokes) one of the authenticated user’s API keys. Fork endpoint (RFD 0001).',
+          tags: ['auth'],
+          parameters: [
+            {
+              name: 'keyId',
+              in: 'path',
+              required: true,
+              description: 'API key id (UUID).',
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': jsonResponse('Deleted.', {
+              type: 'object',
+              properties: { ok: { type: 'boolean', const: true } },
+            }),
+            '401': unauthorizedResponse,
+            '404': { description: 'No such key owned by the current user.' },
           },
         },
       },
@@ -998,10 +1174,10 @@ export function getOpenApiSpec(): Record<string, any> {
       '/api/collect': {
         post: {
           operationId: 'collect',
-          summary: '[STUB] Server-side event collection (fork, ships in RFD 0006)',
+          summary: 'Server-side event collection',
           description:
-            'STUB — not yet implemented in this build. (fork, ships in RFD 0006/0007). API-key-authenticated server/edge collection endpoint: sends a hit for every HTTP request so non-JS clients (AI crawlers, agents) are captured.',
-          tags: ['fork-stubs'],
+            'Fork endpoint (RFD 0006). Accepts fire-and-forget hits from a site’s own server or edge middleware, so non-JS clients (AI crawlers, agents) are captured. Requires a bearer credential (API key or login JWT) whose user can view the target website — unlike `/api/send` this is authenticated, so caller-supplied `ip` and `userAgent` are trusted. The user agent is classified (RFD 0002): known bots/agents are recorded as agent events; everything else goes through the normal session/event pipeline like `/api/send`.',
+          tags: ['collect'],
           requestBody: {
             required: true,
             content: {
@@ -1011,15 +1187,87 @@ export function getOpenApiSpec(): Record<string, any> {
                   required: ['websiteId', 'url', 'userAgent'],
                   properties: {
                     websiteId: { type: 'string', format: 'uuid' },
-                    url: { type: 'string' },
-                    userAgent: { type: 'string' },
+                    url: {
+                      type: 'string',
+                      description: 'Page URL or absolute path of the request being reported.',
+                    },
+                    hostname: { type: 'string', maxLength: 100 },
+                    referrer: { type: 'string', description: 'Referrer URL or path.' },
+                    userAgent: {
+                      type: 'string',
+                      minLength: 1,
+                      maxLength: 1000,
+                      description: 'Raw User-Agent header of the original client.',
+                    },
+                    ip: {
+                      type: 'string',
+                      description:
+                        'Client IP (v4 or v6) of the original request, used for geolocation and session hashing. Must be a valid IP if present.',
+                    },
+                    name: {
+                      type: 'string',
+                      description:
+                        'Custom event name; omit for a pageview. Must not start with `=`, `+`, `-`, `@`, tab or carriage return.',
+                    },
+                    data: {
+                      type: 'object',
+                      additionalProperties: true,
+                      description: 'Custom event data.',
+                    },
+                    timestamp: {
+                      type: 'integer',
+                      description:
+                        'Event time as a Unix timestamp in **seconds**. Must not be in the future or older than 30 days. Defaults to now.',
+                    },
                   },
                 },
               },
             },
           },
           responses: {
-            '202': { description: 'Accepted.' },
+            '200': jsonResponse(
+              'Hit recorded. Bot/agent traffic returns the classified category; human traffic returns the computed session/visit ids.',
+              {
+                oneOf: [
+                  {
+                    type: 'object',
+                    description: 'The user agent was classified as a bot/agent (RFD 0002).',
+                    required: ['ok', 'classified'],
+                    properties: {
+                      ok: { type: 'boolean', const: true },
+                      classified: {
+                        type: 'string',
+                        enum: [
+                          'ai_crawler',
+                          'ai_agent',
+                          'ai_search',
+                          'search_crawler',
+                          'seo_tool',
+                          'monitoring',
+                          'other_bot',
+                        ],
+                        description: 'Agent category the hit was recorded under.',
+                      },
+                    },
+                  },
+                  {
+                    type: 'object',
+                    description:
+                      'Human traffic recorded through the normal session/event pipeline.',
+                    required: ['ok', 'sessionId', 'visitId'],
+                    properties: {
+                      ok: { type: 'boolean', const: true },
+                      sessionId: { type: 'string', format: 'uuid' },
+                      visitId: { type: 'string', format: 'uuid' },
+                    },
+                  },
+                ],
+              },
+            ),
+            '400': {
+              description:
+                'Validation error: invalid body, invalid `ip`, or `timestamp` in the future / older than 30 days.',
+            },
             '401': unauthorizedResponse,
           },
         },
@@ -1027,13 +1275,20 @@ export function getOpenApiSpec(): Record<string, any> {
       '/api/websites/{websiteId}/agents/stats': {
         get: {
           operationId: 'getAgentTrafficStats',
-          summary: '[STUB] AI agent traffic totals (fork, ships in RFD 0006/0007)',
+          summary: 'AI & bot traffic totals',
           description:
-            'STUB — not yet implemented in this build. (fork, ships in RFD 0006/0007). Totals and per-category counts of AI crawler/agent traffic with prior-period comparison.',
-          tags: ['fork-stubs'],
-          parameters: [websiteIdPathParameter],
+            'Fork endpoint (RFD 0007). Totals of classified bot/agent traffic for the range, with the same totals for the immediately preceding period of equal length.',
+          tags: ['agents'],
+          parameters: [websiteIdPathParameter, ...agentDateQueryParameters()],
           responses: {
-            '200': jsonResponse('Agent traffic stats.', { type: 'object' }),
+            '200': jsonResponse('Agent traffic totals for the current and previous period.', {
+              type: 'object',
+              properties: {
+                current: { $ref: '#/components/schemas/AgentTrafficTotals' },
+                previous: { $ref: '#/components/schemas/AgentTrafficTotals' },
+              },
+            }),
+            '400': badRequestResponse,
             '401': unauthorizedResponse,
           },
         },
@@ -1041,16 +1296,44 @@ export function getOpenApiSpec(): Record<string, any> {
       '/api/websites/{websiteId}/agents/series': {
         get: {
           operationId: 'getAgentTrafficSeries',
-          summary: '[STUB] AI agent traffic time series (fork, ships in RFD 0006/0007)',
+          summary: 'AI & bot traffic time series',
           description:
-            'STUB — not yet implemented in this build. (fork, ships in RFD 0006/0007). Agent events over time grouped by category.',
-          tags: ['fork-stubs'],
-          parameters: [websiteIdPathParameter],
+            'Fork endpoint (RFD 0007). Agent event counts over time, one row per (time bucket, category) pair.',
+          tags: ['agents'],
+          parameters: [
+            websiteIdPathParameter,
+            ...agentDateQueryParameters(),
+            {
+              name: 'unit',
+              in: 'query',
+              required: false,
+              description: 'Time bucket (default `day`).',
+              schema: { type: 'string', enum: ['year', 'month', 'day', 'hour', 'minute'] },
+            },
+            {
+              name: 'timezone',
+              in: 'query',
+              required: false,
+              description: 'IANA timezone used for date bucketing (default UTC).',
+              schema: { type: 'string' },
+            },
+          ],
           responses: {
-            '200': jsonResponse('Agent traffic series.', {
+            '200': jsonResponse('Series rows ordered by bucket.', {
               type: 'array',
-              items: { type: 'object' },
+              items: {
+                type: 'object',
+                properties: {
+                  t: { type: 'string', description: 'Bucket start.' },
+                  category: {
+                    type: 'string',
+                    description: 'Agent category (`ai_crawler`, `ai_agent`, `ai_search`, ...).',
+                  },
+                  count: { type: 'number' },
+                },
+              },
             }),
+            '400': badRequestResponse,
             '401': unauthorizedResponse,
           },
         },
@@ -1058,23 +1341,239 @@ export function getOpenApiSpec(): Record<string, any> {
       '/api/websites/{websiteId}/agents/metrics': {
         get: {
           operationId: 'getAgentTrafficMetrics',
-          summary: '[STUB] AI agent traffic breakdown (fork, ships in RFD 0006/0007)',
+          summary: 'AI & bot traffic breakdown',
           description:
-            'STUB — not yet implemented in this build. (fork, ships in RFD 0006/0007). Top agents by name, operator or fetched path.',
-          tags: ['fork-stubs'],
+            'Fork endpoint (RFD 0007). Top agent names, operators or fetched paths by event count.',
+          tags: ['agents'],
           parameters: [
             websiteIdPathParameter,
+            ...agentDateQueryParameters(),
             {
               name: 'type',
               in: 'query',
-              required: true,
+              required: false,
+              description: 'Field to break down by (default `name`).',
               schema: { type: 'string', enum: ['name', 'operator', 'path'] },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              required: false,
+              description: 'Maximum number of rows (default 20).',
+              schema: { type: 'integer', minimum: 1, maximum: 100 },
             },
           ],
           responses: {
-            '200': jsonResponse('Agent metrics rows.', {
+            '200': jsonResponse('Breakdown rows, highest count first.', {
               type: 'array',
-              items: { type: 'object' },
+              items: { $ref: '#/components/schemas/MetricRow' },
+            }),
+            '400': badRequestResponse,
+            '401': unauthorizedResponse,
+          },
+        },
+      },
+      '/api/ai/query': {
+        post: {
+          operationId: 'askAnalytics',
+          summary: 'Ask the analytics AI a question',
+          description:
+            'Fork endpoint (RFD 0009). Answers a natural-language question about a website’s analytics using an LLM with read-only analytics tools. **Env-gated:** returns `404` unless the server is configured with `ANTHROPIC_API_KEY`.',
+          tags: ['ai'],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['websiteId', 'question'],
+                  properties: {
+                    websiteId: { type: 'string', format: 'uuid' },
+                    question: { type: 'string', minLength: 1, maxLength: 1000 },
+                    history: {
+                      type: 'array',
+                      maxItems: 10,
+                      description: 'Prior conversation turns, oldest first.',
+                      items: {
+                        type: 'object',
+                        required: ['role', 'content'],
+                        properties: {
+                          role: { type: 'string', enum: ['user', 'assistant'] },
+                          content: { type: 'string', maxLength: 4000 },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': jsonResponse('The answer plus the analytics tool calls made to produce it.', {
+              type: 'object',
+              properties: {
+                answer: { type: 'string' },
+                toolCalls: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      args: { type: 'object', additionalProperties: true },
+                    },
+                  },
+                },
+              },
+            }),
+            '400': badRequestResponse,
+            '401': unauthorizedResponse,
+            '404': {
+              description: 'AI features are not enabled (`ANTHROPIC_API_KEY` is not configured).',
+            },
+          },
+        },
+      },
+      '/api/alerts': {
+        get: {
+          operationId: 'listAlerts',
+          summary: 'List alerts for a website',
+          description: 'Fork endpoint (RFD 0008). Lists the alerts configured for a website.',
+          tags: ['alerts'],
+          parameters: [
+            {
+              name: 'websiteId',
+              in: 'query',
+              required: true,
+              description: 'Website id (UUID).',
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': jsonResponse('Alerts for the website.', {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Alert' },
+            }),
+            '400': badRequestResponse,
+            '401': unauthorizedResponse,
+          },
+        },
+        post: {
+          operationId: 'createAlert',
+          summary: 'Create an alert',
+          description:
+            'Fork endpoint (RFD 0008). Creates an alert on a website. Requires update permission on the website. Channel URLs must be public http(s) addresses (SSRF-guarded).',
+          tags: ['alerts'],
+          requestBody: alertRequestBody(true),
+          responses: {
+            '200': jsonResponse('The created alert.', { $ref: '#/components/schemas/Alert' }),
+            '400': badRequestResponse,
+            '401': unauthorizedResponse,
+          },
+        },
+      },
+      '/api/alerts/{alertId}': {
+        get: {
+          operationId: 'getAlert',
+          summary: 'Get an alert with recent events',
+          description:
+            'Fork endpoint (RFD 0008). Returns the alert plus its most recent 50 trigger/error events.',
+          tags: ['alerts'],
+          parameters: [alertIdPathParameter],
+          responses: {
+            '200': jsonResponse('The alert with its recent events.', {
+              allOf: [
+                { $ref: '#/components/schemas/Alert' },
+                {
+                  type: 'object',
+                  properties: {
+                    events: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/AlertEvent' },
+                    },
+                  },
+                },
+              ],
+            }),
+            '401': unauthorizedResponse,
+            '404': { description: 'Alert not found.' },
+          },
+        },
+        post: {
+          operationId: 'updateAlert',
+          summary: 'Update an alert',
+          description:
+            'Fork endpoint (RFD 0008). Partial update; all fields optional. Editing reschedules the alert to run on the next tick.',
+          tags: ['alerts'],
+          parameters: [alertIdPathParameter],
+          requestBody: alertRequestBody(false),
+          responses: {
+            '200': jsonResponse('The updated alert.', { $ref: '#/components/schemas/Alert' }),
+            '400': badRequestResponse,
+            '401': unauthorizedResponse,
+            '404': { description: 'Alert not found.' },
+          },
+        },
+        delete: {
+          operationId: 'deleteAlert',
+          summary: 'Delete an alert',
+          description: 'Fork endpoint (RFD 0008). Soft-deletes the alert.',
+          tags: ['alerts'],
+          parameters: [alertIdPathParameter],
+          responses: {
+            '200': jsonResponse('Deleted.', {
+              type: 'object',
+              properties: { ok: { type: 'boolean', const: true } },
+            }),
+            '401': unauthorizedResponse,
+            '404': { description: 'Alert not found.' },
+          },
+        },
+      },
+      '/api/jobs/tick': {
+        post: {
+          operationId: 'runJobsTick',
+          summary: 'Run the jobs scheduler tick',
+          description:
+            'Fork endpoint (RFD 0008). Idempotent scheduler entry point, meant to be called by an external cron (e.g. every minute). Evaluates all due alerts and sends notifications. Authorized either by the `x-umami-jobs-key` header matching the server’s `JOBS_KEY` env var, or by an admin bearer credential.',
+          tags: ['jobs'],
+          security: [{ jobsKey: [] }, { bearerAuth: [] }],
+          responses: {
+            '200': jsonResponse('Tick summary.', {
+              type: 'object',
+              properties: {
+                processed: { type: 'number', description: 'Alerts evaluated this tick.' },
+                triggered: { type: 'number', description: 'Alerts that fired notifications.' },
+                errors: { type: 'number', description: 'Alerts that failed to evaluate.' },
+              },
+            }),
+            '401': unauthorizedResponse,
+          },
+        },
+      },
+      '/api/mcp': {
+        post: {
+          operationId: 'mcp',
+          summary: 'MCP endpoint (JSON-RPC 2.0)',
+          description:
+            'Fork endpoint (RFD 0005). Stateless Model Context Protocol endpoint speaking JSON-RPC 2.0 over HTTP POST. Supported methods: `initialize`, `tools/list`, `tools/call`. Point an MCP client at this URL with a bearer API key; the request/response envelopes follow the MCP specification and are not modeled in this document.',
+          tags: ['mcp'],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  description:
+                    'A JSON-RPC 2.0 request object (`{ jsonrpc: "2.0", id, method, params }`). See the MCP specification.',
+                  additionalProperties: true,
+                },
+              },
+            },
+          },
+          responses: {
+            '200': jsonResponse('A JSON-RPC 2.0 response object (result or error).', {
+              type: 'object',
+              additionalProperties: true,
             }),
             '401': unauthorizedResponse,
           },
