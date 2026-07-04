@@ -1,3 +1,6 @@
+// Fork (RFD 0003)
+import { EXTRA_LLM_DOMAINS } from '@/lib/agents';
+
 export const CURRENT_VERSION = process.env.currentVersion;
 export const AUTH_TOKEN = 'umami.auth';
 export const LOCALE_CONFIG = 'umami.locale';
@@ -367,6 +370,7 @@ export const LLM_DOMAINS = [
   'gemini.google.com',
   'meta.ai',
   'perplexity.ai',
+  ...EXTRA_LLM_DOMAINS, // Fork (RFD 0003)
 ];
 
 export const SHOPPING_DOMAINS = [

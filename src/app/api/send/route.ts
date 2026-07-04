@@ -1,6 +1,6 @@
 import { startOfHour } from 'date-fns';
-import { isbot } from 'isbot';
 import { z } from 'zod';
+import { checkAgentTraffic } from '@/lib/agent-traffic';
 import clickhouse from '@/lib/clickhouse';
 import { CACHE_TOKEN_TYPE, COLLECTION_TYPE, EVENT_TYPE } from '@/lib/constants';
 import { getSalt, hash, secret, uuid } from '@/lib/crypto';
@@ -134,8 +134,19 @@ export async function POST(request: Request) {
       payload,
     );
 
-    // Bot check
-    if (!process.env.DISABLE_BOT_CHECK && isbot(userAgent)) {
+    const createdAt = timestamp ? new Date(timestamp * 1000) : new Date();
+
+    // Bot check — Fork (RFD 0002): capture & classify agent traffic instead of dropping it
+    const agentCheck = await checkAgentTraffic({
+      userAgent,
+      websiteId,
+      url,
+      hostname,
+      referrer,
+      ip,
+      createdAt,
+    });
+    if (agentCheck.handled) {
       return json({ beep: 'boop' });
     }
 
@@ -144,7 +155,6 @@ export async function POST(request: Request) {
       return forbidden();
     }
 
-    const createdAt = timestamp ? new Date(timestamp * 1000) : new Date();
     const now = Math.floor(Date.now() / 1000);
 
     const saltRotation = process.env.SALT_ROTATION || 'month';
