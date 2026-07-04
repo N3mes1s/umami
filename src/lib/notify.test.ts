@@ -57,6 +57,21 @@ describe('isSafeWebhookUrl', () => {
     expect(isSafeWebhookUrl('http://[fc00::1]/hook')).toBe(false); // unique-local IPv6
     expect(isSafeWebhookUrl('http://[fe80::1]/hook')).toBe(false); // link-local IPv6
   });
+
+  test('blocks internal service-discovery hostnames (SSRF into private network)', () => {
+    expect(isSafeWebhookUrl('http://postgres.railway.internal:5432/')).toBe(false);
+    expect(isSafeWebhookUrl('http://umami.railway.internal/api')).toBe(false);
+    expect(isSafeWebhookUrl('http://anything.internal/x')).toBe(false);
+    expect(isSafeWebhookUrl('http://printer.local/x')).toBe(false);
+    expect(isSafeWebhookUrl('http://metadata.google.internal/computeMetadata/v1/')).toBe(false);
+    expect(isSafeWebhookUrl('http://metadata/latest/meta-data/')).toBe(false);
+  });
+
+  test('still allows legitimate public hostnames', () => {
+    expect(isSafeWebhookUrl('https://hooks.slack.com/services/x')).toBe(true);
+    expect(isSafeWebhookUrl('https://example.com/webhook')).toBe(true);
+    expect(isSafeWebhookUrl('https://internal.example.com/x')).toBe(true); // "internal" as a subdomain label, not the .internal TLD
+  });
 });
 
 describe('buildPayload', () => {
