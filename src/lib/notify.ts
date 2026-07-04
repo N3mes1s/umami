@@ -33,11 +33,23 @@ const FETCH_TIMEOUT_MS = 5000;
  * so only public unicast addresses pass. Hostnames that are not IP literals
  * (a domain, or "localhost") are checked by name.
  *
+ * Internal service-discovery hostnames (`*.internal` incl. Railway's
+ * `*.railway.internal` private network, `*.local` mDNS, and known cloud
+ * metadata names) are rejected by name, so an authenticated alert author
+ * can't point a webhook at internal infrastructure.
+ *
  * Documented limitation: a public hostname that resolves to a private address
  * (DNS rebinding) is NOT caught here — that would require resolving and
  * pinning the address at connect time. Redirects are not followed (see
  * attempt()), so an allowed host cannot bounce the request to a private one.
  */
+const BLOCKED_HOST_SUFFIXES = ['.localhost', '.internal', '.local'];
+const BLOCKED_HOSTS = new Set([
+  'localhost',
+  'metadata.google.internal',
+  'metadata', // common short metadata alias
+]);
+
 export function isSafeWebhookUrl(url: string): boolean {
   let parsed: URL;
 
@@ -54,7 +66,7 @@ export function isSafeWebhookUrl(url: string): boolean {
   // Strip IPv6 brackets; lowercase for comparison.
   const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
 
-  if (host === 'localhost' || host.endsWith('.localhost')) {
+  if (BLOCKED_HOSTS.has(host) || BLOCKED_HOST_SUFFIXES.some(s => host.endsWith(s))) {
     return false;
   }
 
