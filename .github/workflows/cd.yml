@@ -116,7 +116,7 @@ jobs:
           # Fork: bake the adblock-resistant tracker script name (/stats.js) at
           # build time — it's a Next rewrite, not a runtime setting.
           build-args: |
-            TRACKER_SCRIPT_NAME=stats
+            TRACKER_SCRIPT_NAME=stats.js
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
