@@ -56,7 +56,9 @@ export async function recordAgentEvent({
     referrerDomain = referrerUrl.hostname.replace(/^www\./, '');
   }
 
-  const ipHash = ip ? hash(ip, getSalt('day', createdAt)) : null;
+  // sha512 hex is 128 chars; the ip_hash column is varchar(64). 64 hex chars
+  // (256 bits) is ample for daily-salted dedup.
+  const ipHash = ip ? hash(ip, getSalt('day', createdAt)).slice(0, 64) : null;
 
   return saveAgentEvent({
     websiteId,
