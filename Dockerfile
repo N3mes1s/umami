@@ -24,8 +24,15 @@ COPY . .
 COPY docker/proxy.ts ./src
 
 ARG BASE_PATH
+# Fork: the tracker script-name rewrite and collect-endpoint rewrite are baked
+# into the Next build (next.config.ts), so they must be present at build time,
+# not just at runtime. Default empty keeps the image generic.
+ARG TRACKER_SCRIPT_NAME
+ARG COLLECT_API_ENDPOINT
 
 ENV BASE_PATH=$BASE_PATH
+ENV TRACKER_SCRIPT_NAME=$TRACKER_SCRIPT_NAME
+ENV COLLECT_API_ENDPOINT=$COLLECT_API_ENDPOINT
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL="postgresql://user:pass@localhost:5432/dummy"
 
