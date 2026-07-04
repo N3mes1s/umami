@@ -1,5 +1,6 @@
 import {
   AlignEndHorizontal,
+  Bot,
   ChartPie,
   Clock,
   Eye,
@@ -72,6 +73,13 @@ export function useWebsiteNavItems(websiteId: string) {
           label: t(labels.breakdown),
           icon: <Sheet />,
           path: renderPath('/breakdown'),
+        },
+        // Fork (RFD 0007)
+        {
+          id: 'agents',
+          label: 'AI Traffic',
+          icon: <Bot />,
+          path: renderPath('/agents'),
         },
       ],
     },

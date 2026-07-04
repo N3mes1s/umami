@@ -6,6 +6,8 @@ import { McpToolError } from '@/lib/mcp/errors';
 import type { Auth, QueryFilters } from '@/lib/types';
 import { canViewWebsite } from '@/permissions';
 import { getUserWebsites } from '@/queries/prisma/website';
+import { getAgentMetrics } from '@/queries/sql/agents/getAgentMetrics';
+import { getAgentStats } from '@/queries/sql/agents/getAgentStats';
 import { getEventMetrics } from '@/queries/sql/events/getEventMetrics';
 import { getWebsiteEvents } from '@/queries/sql/events/getWebsiteEvents';
 import { getActiveVisitors } from '@/queries/sql/getActiveVisitors';
@@ -436,6 +438,42 @@ const runReport: McpTool = {
   },
 };
 
+// Fork (RFD 0007): AI & bot traffic report.
+const getAgentTraffic: McpTool = {
+  name: 'get_agent_traffic',
+  description:
+    'Get AI and bot traffic for a website (server-side classified agent events, separate from ' +
+    'regular pageviews). Returns stats for the range and the equal-length previous period ' +
+    '(events = all classified bot/agent events; crawlers = ai_crawler AI training/ingestion ' +
+    'crawlers like GPTBot/ClaudeBot; agents = ai_agent user-directed AI browsing like ' +
+    'ChatGPT-User/Claude-User; search = ai_search AI search indexers; other = search crawlers, ' +
+    'SEO tools, monitoring and other bots; distinctClients = distinct hashed client IPs), plus a ' +
+    'top breakdown by agent name, operator, or page path as rows of { x: value, y: event count } ' +
+    `(up to 20 rows). ${RANGE_SEMANTICS}`,
+  inputSchema: z.object({
+    websiteId: websiteIdSchema,
+    range: rangeSchema,
+    breakdown: z
+      .enum(['name', 'operator', 'path'])
+      .optional()
+      .describe('Dimension for the top breakdown: agent name (default), operator, or page path'),
+  }),
+  async execute(auth, args) {
+    await checkWebsiteAccess(auth, args.websiteId);
+
+    const { filters, echo } = toQueryFilters(args.range);
+    const { startDate, endDate } = filters;
+    const breakdown = args.breakdown ?? 'name';
+
+    const [stats, top] = await Promise.all([
+      getAgentStats(args.websiteId, { startDate, endDate }),
+      getAgentMetrics(args.websiteId, { startDate, endDate }, breakdown),
+    ]);
+
+    return { range_echo: echo, breakdown, stats, top };
+  },
+};
+
 export const mcpTools: McpTool[] = [
   listWebsites,
   getWebsiteStatsTool,
@@ -444,4 +482,5 @@ export const mcpTools: McpTool[] = [
   getEvents,
   getActiveVisitorsTool,
   runReport,
+  getAgentTraffic, // Fork (RFD 0007)
 ];
