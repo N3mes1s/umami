@@ -52,6 +52,7 @@ jobs:
         id: compute
         run: |
           INPUT="${{ github.event.inputs.version }}"
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           REF_TYPE="${{ github.ref_type }}"
           REF_NAME="${{ github.ref_name }}"
           INCLUDE_LATEST="${{ github.event.inputs.include_latest }}"
@@ -74,14 +75,14 @@ jobs:
 
             if [[ "$VERSION" == *-* ]]; then
               # prerelease: only version tag
-              GHCR_TAGS="ghcr.io/${{ github.repository }}:$VERSION"
+              GHCR_TAGS="ghcr.io/${REPO_LC}:$VERSION"
               DOCKER_TAGS="umamisoftware/umami:$VERSION"
             else
               # stable release: version + hierarchy
-              GHCR_TAGS="ghcr.io/${{ github.repository }}:$VERSION"
-              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${{ github.repository }}:${MAJOR}.${MINOR}"
-              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${{ github.repository }}:${MAJOR}"
-              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${{ github.repository }}:postgresql-latest"
+              GHCR_TAGS="ghcr.io/${REPO_LC}:$VERSION"
+              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${REPO_LC}:${MAJOR}.${MINOR}"
+              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${REPO_LC}:${MAJOR}"
+              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${REPO_LC}:postgresql-latest"
           
               DOCKER_TAGS="umamisoftware/umami:$VERSION"
               DOCKER_TAGS="$DOCKER_TAGS,umamisoftware/umami:${MAJOR}.${MINOR}"
@@ -90,13 +91,13 @@ jobs:
           
               # Add latest tag based on trigger and input
               if [[ "$REF_TYPE" == "tag" ]] || [[ "$INCLUDE_LATEST" == "true" ]]; then
-                GHCR_TAGS="$GHCR_TAGS,ghcr.io/${{ github.repository }}:latest"
+                GHCR_TAGS="$GHCR_TAGS,ghcr.io/${REPO_LC}:latest"
                 DOCKER_TAGS="$DOCKER_TAGS,umamisoftware/umami:latest"
               fi
             fi
           else
             # Non-tag build (e.g. from main branch)
-            GHCR_TAGS="ghcr.io/${{ github.repository }}:${REF_NAME}"
+            GHCR_TAGS="ghcr.io/${REPO_LC}:${REF_NAME}"
             DOCKER_TAGS="umamisoftware/umami:${REF_NAME}"
           fi
 
